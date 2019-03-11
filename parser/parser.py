@@ -6,6 +6,10 @@ from logs import Querylog
 import exceptions 
 import api
 
+from stop_words import get_stop_words
+import pymorphy2
+import re
+
 
 def parse_person(person):
     """Parse info about person in wiki
@@ -20,7 +24,13 @@ def parse_person(person):
     person_id   = person['id']
 
     pages = get_pages_from_wiki_search(person_name)
-    page  = select_page_like_person(pages, person)
+    true_pages = [p for p in pages if person['name'] in p['title'].replace(',', '')]
+    
+    if len(true_pages):
+        page = select_page_like_person(true_pages, person)
+    else:
+        raise exceptions.WikiError('Empty search result')
+
 
     wiki_person = {
         'id': person_id, 'fullname': person_name,
@@ -81,6 +91,7 @@ def get_pages_from_search_results(results):
         pages.append(page)
     return pages
 
+
 def get_pages_from_wiki_search(person_name):
     """search wiki pages and aggregate it if
     
@@ -96,12 +107,14 @@ def get_pages_from_wiki_search(person_name):
         raise exceptions.WikiError('Empty search result')
 
     pages = get_pages_from_search_results(results)
-    if 'continue' in results:
+    while 'continue' in results:
         search_offset = int(results['continue']['gsroffset'])
 
-        for offset in range(1, search_offset+1):
+        for offset in range(search_offset, search_offset+1):
             results = api.wiki_search(person_name, gsroffset=offset)
-            pages.extend(get_pages_from_search_results(results))
+            pid = results['query']['pageids'][0]
+            if person_name in results['query']['pages'][pid]['title'].replace(',' , ''):
+                pages.extend(get_pages_from_search_results(results))
     return pages
 
 def select_page_like_person(pages, person):
@@ -129,13 +142,17 @@ def select_page_like_person(pages, person):
             page['declarator_profile'] = declapage
             return page
 
-    # TODO: check duplicate in count of words
     max_intersections = max(words_intersections_in_pages)
-    relevant_page = words_intersections_in_pages.index(max_intersections)
-    page = pages[relevant_page]
+    if max_intersections > 0:
+        relevant_page = words_intersections_in_pages.index(max_intersections)
+        page = pages[relevant_page]
 
-    page['words_intersection'] = max_intersections
-    return pages[relevant_page]
+        page['words_intersection'] = max_intersections
+        return pages[relevant_page]
+    else:
+        raise exceptions.WikiError('Empty search result')
+
+
 
 def get_declapage_from_extlinks(extlinks):
     """will return url to declarator if it exist
@@ -164,11 +181,11 @@ def get_bag_of_words_from_persons_dump(json):
     words = set()
     if 'offices' in json:
         for office in json['offices']:
-            words = words.union(get_bag_of_words(office))
+            words = words.union(get_bag_of_words(office)[1])
 
     if 'roles' in json:
         for role in json['roles']:
-            words = words.union(get_bag_of_words(role))
+            words = words.union(get_bag_of_words(role)[1])
 
     return words
 
@@ -180,31 +197,50 @@ def get_bag_of_words_from_wiki_page(pagetext):
     Returns:
         set -- set with bag of words
     """
-    return set().union(get_bag_of_words(pagetext))
+    return set().union(get_bag_of_words(pagetext)[1])
+
+def is_eng(w):
+    if re.search(r'[a-z]', w):
+        return True
     
 def get_bag_of_words(string):
-    """Will return list with words in string
+    # """Will return list with words in string
     
-    Arguments:
-        string {str} -- text
+    # Arguments:
+    #     string {str} -- text
     
-    Returns:
-        list -- list with words
-    """
+    # Returns:
+    #     list -- list with words
+    # """
+    
     if isinstance(string, str):
-        string = string.lower()
+        stop = get_stop_words('ru')
+        tokens_list = re.split(r'\W+', string.lower())
+        morph = pymorphy2.MorphAnalyzer()
+        lemmas = []
+        for token in tokens_list:
+            to = token.lower()
+            if not is_eng(to):
+                l = morph.parse(to)[0].normal_form
+                lemmas.append(l)
+        outp = [lemma for lemma in lemmas
+                if lemma not in stop]
+        
+        return (lemmas, outp)
 
-        punctuation = ASCII_punctuation
-        for char in punctuation:
-            string = string.replace(char, '')
+        # string = string.lower()
 
-        string = string.replace('\n', ' ')
-        words = string.split()
+        # punctuation = ASCII_punctuation
+        # for char in punctuation:
+        #     string = string.replace(char, '')
 
-        for idw, word in enumerate(words):
-            if len(word) <= 3:
-                del words[idw]
-        return words
+        # string = string.replace('\n', ' ')
+        # words = string.split()
+
+        # for idw, word in enumerate(words):
+        #     if len(word) <= 3:
+        #         del words[idw]
+        # return words
     return []
 
 def get_persons_from_dump(file):
