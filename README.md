@@ -27,7 +27,7 @@
 
 2) Скачивание фотографий по ссылкам собранным из википедии. Поумолчанию фотографии сохраняются в папку ./photos в рабочей директории.
 
-`python parser/photos.py --results 'results.json'`
+`python parser/photo.py --results 'results.json'`
 
     optional arguments:
     --results          путь к json-файлу с результатами парсинга
